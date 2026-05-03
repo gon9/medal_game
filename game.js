@@ -279,20 +279,30 @@ function spinSlot(bonusMedals) {
   });
 }
 
+let flashOverlay = 0; // 0..1, drawn each frame
+
 function onSlotComplete() {
   const [a, b, c] = slotReels;
   const resultEl = document.getElementById('slot-result');
+  const reelEls = [
+    document.getElementById('reel-0'),
+    document.getElementById('reel-1'),
+    document.getElementById('reel-2'),
+  ];
   let reward = 0;
 
   if (a === b && b === c) {
     reward = SLOT_PAYOUTS[a] || 5;
     resultEl.textContent = `✨ ${a}${b}${c} ✨ +${reward}枚!`;
     resultEl.style.color = '#f0c040';
+    flashOverlay = 1.0;
+    reelEls.forEach(el => { el.style.boxShadow = '0 0 24px #fff, 0 0 48px #f0c040'; });
+    setTimeout(() => reelEls.forEach(el => { el.style.boxShadow = ''; }), 1200);
     spawnRewardMedals(reward);
   } else if (a === b || b === c || a === c) {
     reward = 2;
     resultEl.textContent = `${a}${b}${c} +${reward}枚`;
-    resultEl.style.color = '#aaa';
+    resultEl.style.color = '#c0c0c0';
     spawnRewardMedals(reward);
   } else {
     resultEl.textContent = `${a}${b}${c} ハズレ`;
@@ -451,6 +461,14 @@ function gameLoop() {
 
   medals.forEach(m => m.draw(ctx));
   particles.forEach(p => p.draw(ctx));
+
+  // Jackpot flash overlay
+  if (flashOverlay > 0) {
+    ctx.fillStyle = `rgba(255,240,100,${flashOverlay * 0.35})`;
+    ctx.fillRect(0, 0, W, H);
+    flashOverlay -= 0.03;
+    if (flashOverlay < 0) flashOverlay = 0;
+  }
 
   ctx.restore();
 
