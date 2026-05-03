@@ -173,28 +173,36 @@ function updatePusher() {
   });
 }
 
-function drawPusher(W) {
-  const rect = canvas.getBoundingClientRect();
+function drawPusher(W, H) {
   const alpha = pusher.progress / PUSHER_DEPTH;
-  ctx.fillStyle = `rgba(80,40,160,${0.7 + alpha * 0.2})`;
-  ctx.strokeStyle = '#a060ff';
-  ctx.lineWidth = 2;
-  // Back shelf (static)
-  ctx.fillRect(pusher.x, pusher.y + pusher.h, pusher.w, 8);
-  // Moving pusher plate
-  ctx.fillStyle = `rgba(120,60,220,${0.8 + alpha * 0.15})`;
-  ctx.fillRect(pusher.x, pusher.y - 4, pusher.w, pusher.h + 4);
-  ctx.strokeRect(pusher.x, pusher.y - 4, pusher.w, pusher.h + 4);
+  const px = pusher.x, pw = pusher.w;
+  const py = pusher.y, ph = pusher.h;
 
-  // Medals on table visual reference lines
-  ctx.strokeStyle = 'rgba(255,200,100,0.15)';
-  ctx.lineWidth = 1;
-  for (let i = 1; i < 5; i++) {
-    ctx.beginPath();
-    ctx.moveTo(pusher.x + pusher.w * i / 5, pusher.y - 4);
-    ctx.lineTo(pusher.x + pusher.w * i / 5, pusher.y + pusher.h);
-    ctx.stroke();
-  }
+  // Static back shelf (always at baseY + PUSHER_DEPTH)
+  const shelfY = pusher.baseY + PUSHER_DEPTH + ph;
+  ctx.fillStyle = '#2a1060';
+  ctx.fillRect(px, shelfY, pw, H - shelfY);
+  ctx.strokeStyle = '#6030a0';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(px, shelfY, pw, H - shelfY);
+
+  // Pusher plate with gradient
+  const plateGrad = ctx.createLinearGradient(px, py, px, py + ph);
+  plateGrad.addColorStop(0, `rgba(160,80,255,${0.7 + alpha * 0.25})`);
+  plateGrad.addColorStop(1, `rgba(80,30,160,${0.8 + alpha * 0.15})`);
+  ctx.fillStyle = plateGrad;
+  ctx.fillRect(px, py, pw, ph);
+  ctx.strokeStyle = `rgba(200,140,255,${0.6 + alpha * 0.4})`;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(px, py, pw, ph);
+
+  // Sheen line on top edge
+  ctx.strokeStyle = `rgba(255,220,255,${0.3 + alpha * 0.4})`;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(px + 4, py + 2);
+  ctx.lineTo(px + pw - 4, py + 2);
+  ctx.stroke();
 }
 
 function drawBackground(W, H) {
@@ -439,7 +447,7 @@ function gameLoop() {
 
   drawBackground(W, H);
   drawDropZone(W, H);
-  drawPusher(W);
+  drawPusher(W, H);
 
   medals.forEach(m => m.draw(ctx));
   particles.forEach(p => p.draw(ctx));
