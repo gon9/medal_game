@@ -377,6 +377,30 @@ sliderTrack.addEventListener('touchend', e => {
   dropMedal();
 }, { passive: false });
 
+// ===== Game Over =====
+function checkGameOver() {
+  if (medalCount <= 0 && medals.length === 0) {
+    const resultEl = document.getElementById('slot-result');
+    resultEl.textContent = 'ゲームオーバー！タップでリスタート';
+    resultEl.style.color = '#ff4040';
+    canvas.addEventListener('click', restartGame, { once: true });
+    document.getElementById('drop-btn').disabled = true;
+  }
+}
+
+function restartGame() {
+  medals = [];
+  particles = [];
+  medalCount = 100;
+  score = 0;
+  collected = 0;
+  slotSpinning = false;
+  flashOverlay = 0;
+  document.getElementById('slot-result').textContent = '';
+  document.getElementById('drop-btn').disabled = false;
+  updateHUD();
+}
+
 // ===== Drop logic =====
 function dropMedal() {
   if (medalCount <= 0) return;
@@ -443,6 +467,7 @@ function gameLoop() {
       // Trigger slot every 5 collected
       if (collected % 5 === 0) spinSlot();
       updateHUD();
+      checkGameOver();
     }
   });
   for (let i = toRemove.length - 1; i >= 0; i--) medals.splice(toRemove[i], 1);
