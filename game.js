@@ -313,13 +313,10 @@ function onSlotComplete() {
 }
 
 function spawnRewardMedals(n) {
-  const W = canvas.getBoundingClientRect().width;
   for (let i = 0; i < n; i++) {
     setTimeout(() => {
       const x = pusher.x + Math.random() * pusher.w;
       medals.push(new Medal(x, -MEDAL_R * 2));
-      medalCount += 1;
-      updateHUD();
     }, i * 60);
   }
 }
