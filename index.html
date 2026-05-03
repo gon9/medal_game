@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>メダル落としゲーム</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="game-container">
+    <!-- ヘッダー：所持メダル数 -->
+    <div id="hud">
+      <div id="medal-count">
+        <span class="label">メダル</span>
+        <span id="medal-value">100</span>
+        <span class="label">枚</span>
+      </div>
+      <div id="score">
+        <span class="label">スコア</span>
+        <span id="score-value">0</span>
+      </div>
+    </div>
+
+    <!-- メインゲームエリア -->
+    <canvas id="game-canvas"></canvas>
+
+    <!-- スロットエリア -->
+    <div id="slot-area">
+      <div id="slot-machine">
+        <div class="reel-container">
+          <div class="reel" id="reel-0"><span class="reel-item">7</span></div>
+          <div class="reel" id="reel-1"><span class="reel-item">7</span></div>
+          <div class="reel" id="reel-2"><span class="reel-item">7</span></div>
+        </div>
+        <div id="slot-result"></div>
+      </div>
+    </div>
+
+    <!-- 投入コントロール -->
+    <div id="controls">
+      <div id="slider-track">
+        <div id="slider-thumb"></div>
+        <div id="drop-indicator"></div>
+      </div>
+      <button id="drop-btn">投入</button>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
