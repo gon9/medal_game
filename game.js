@@ -17,8 +17,8 @@ let slotSpinning = false;
 let slotReels = ['7', '7', '7'];
 let slotAnimFrame = 0;
 
-// Pusher state
-let pusher = { x: 0, y: 0, w: 0, h: 18, dir: 1, progress: 0 };
+// Pusher state — baseY is fixed, y moves forward/back with progress
+let pusher = { x: 0, y: 0, baseY: 0, w: 0, h: 18, dir: 1, progress: 0 };
 
 // Slider state
 let sliderRatio = 0.5; // 0..1
@@ -36,7 +36,8 @@ function resize() {
 
   pusher.w = rect.width * 0.7;
   pusher.x = rect.width / 2 - pusher.w / 2;
-  pusher.y = rect.height * 0.55;
+  pusher.baseY = rect.height * 0.52;
+  pusher.y = pusher.baseY;
 }
 
 window.addEventListener('resize', () => { resize(); });
@@ -154,19 +155,19 @@ class Particle {
 
 // ===== Pusher =====
 function updatePusher() {
-  pusher.progress += PUSHER_SPEED;
+  pusher.progress += pusher.dir * PUSHER_SPEED;
   if (pusher.progress >= PUSHER_DEPTH) {
     pusher.progress = PUSHER_DEPTH;
     pusher.dir = -1;
-  }
-  if (pusher.progress <= 0) {
+  } else if (pusher.progress <= 0) {
     pusher.progress = 0;
     pusher.dir = 1;
   }
-  const prevX = pusher.x;
-  pusher.progress += pusher.dir * PUSHER_SPEED;
-  // Push medals that are on table
-  const pushDelta = PUSHER_SPEED * pusher.dir * 0.4;
+  // Pusher moves forward (down-screen) as progress increases
+  pusher.y = pusher.baseY + pusher.progress;
+
+  // Nudge on-table medals in the push direction
+  const pushDelta = PUSHER_SPEED * pusher.dir * 0.35;
   medals.forEach(m => {
     if (m.onTable) m.vx += pushDelta;
   });
@@ -353,15 +354,30 @@ sliderTrack.addEventListener('touchmove', e => {
   updateSliderUI();
 }, { passive: false });
 
-// ===== Drop Button =====
-document.getElementById('drop-btn').addEventListener('click', () => {
+sliderTrack.addEventListener('touchend', e => {
+  e.preventDefault();
+  dropMedal();
+}, { passive: false });
+
+// ===== Drop logic =====
+function dropMedal() {
   if (medalCount <= 0) return;
-  const W = canvas.getBoundingClientRect().width;
   const dropX = pusher.x + sliderRatio * pusher.w;
   medals.push(new Medal(dropX, 0));
   medalCount -= 1;
   updateHUD();
+}
+
+// ===== Drop Button =====
+let autoDropTimer = null;
+
+const dropBtn = document.getElementById('drop-btn');
+dropBtn.addEventListener('pointerdown', () => {
+  dropMedal();
+  autoDropTimer = setInterval(() => dropMedal(), 280);
 });
+dropBtn.addEventListener('pointerup', () => { clearInterval(autoDropTimer); });
+dropBtn.addEventListener('pointerleave', () => { clearInterval(autoDropTimer); });
 
 // ===== Main Loop =====
 let collected = 0; // medals collected this session for slot trigger
@@ -373,6 +389,27 @@ function gameLoop() {
 
   // Update pusher
   updatePusher();
+
+  // Medal-medal collision (simple circle push)
+  for (let i = 0; i < medals.length; i++) {
+    for (let j = i + 1; j < medals.length; j++) {
+      const a = medals[i], b = medals[j];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const minDist = a.r + b.r;
+      if (dist < minDist && dist > 0.01) {
+        const nx = dx / dist, ny = dy / dist;
+        const overlap = (minDist - dist) / 2;
+        a.x -= nx * overlap; a.y -= ny * overlap;
+        b.x += nx * overlap; b.y += ny * overlap;
+        const rel = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+        if (rel > 0) {
+          a.vx -= rel * nx * 0.5; a.vy -= rel * ny * 0.5;
+          b.vx += rel * nx * 0.5; b.vy += rel * ny * 0.5;
+        }
+      }
+    }
+  }
 
   // Update medals
   const toRemove = [];
