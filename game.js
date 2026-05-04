@@ -4,9 +4,9 @@ const BALL_R     = 20;
 const GRAVITY    = 0.42;
 const PUSHER_SPD = 0.55;
 const PUSHER_MAX = 72;   // how far pusher travels forward (px)
-const FRIC_TABLE = 0.955;  // 高摩擦：メダルが詰まって止まりやすく
+const FRIC_TABLE = 0.970;  // さらに高摩擦：ほぼ動かない
 const FRIC_AIR   = 0.995;
-const SETTLE_V   = 0.28;   // この速度以下なら静止
+const SETTLE_V   = 0.40;   // 停止閾値を上げる（より素早く静止）
 const BOUNCE_M   = 0.20;
 const BOUNCE_B   = 0.58;
 // 獲得口は中央70%のみ（両端15%はガター）
@@ -101,11 +101,11 @@ class Medal {
         this.vx = -Math.abs(this.vx) * 0.55;
       }
 
-      // 台面に着地 → 乗る（横速度を強めに殺す）
+      // 台面に着地 → バーで完全停止させる
       if (this.y + this.r >= table.topY) {
         this.y  = table.topY - this.r;
+        this.vx = 0;  // 完全停止
         this.vy = 0;
-        this.vx *= 0.15;   // 着地衝撃で横滑りをほぼ止める
         this.onTable = true;
       }
 
@@ -292,15 +292,16 @@ function updatePusher() {
   else if (pusher.progress <= 0)     { pusher.progress = 0;          pusher.dir = 1; }
   pusher.y = pusher.baseY + pusher.progress;
 
-  // 前進時のみ：プッシャーに直接触れているメダル・ボールだけ押す
-  // 連鎖（詰まり→押し出し）は衝突判定が担う
+  // 前進時のみ：プッシャー面に近いメダルを押す
+  // メダルは table.topY - r に静止しているため pusher.y + 幅で拾う
   if (pusher.dir === 1) {
-    const force = PUSHER_SPD * 1.1;
+    const force = PUSHER_SPD * 1.3;
+    const pushReach = pusher.y + pusher.h + MEDAL_R * 1.2;
     medals.forEach(m => {
-      if (m.onTable && m.y >= pusher.y - MEDAL_R * 0.6) m.vy += force;
+      if (m.onTable && m.y - m.r <= pushReach) m.vy += force;
     });
-    if (ballObj && ballObj.onTable && ballObj.y >= pusher.y - BALL_R * 0.6) {
-      ballObj.vy += force * 1.6;
+    if (ballObj && ballObj.onTable) {
+      ballObj.vy += force * 1.4;
     }
   }
 }
