@@ -1,153 +1,267 @@
 // ===== Constants =====
-const MEDAL_R = 14;
-const GRAVITY = 0.4;
-const PUSHER_SPEED = 0.6;
-const PUSHER_DEPTH = 60; // how far pusher travels
-const FRICTION = 0.94;
-const BOUNCE = 0.25;
-const SLOT_SYMBOLS = ['7', '★', '♦', '♣', '♥', '♠'];
-const SLOT_PAYOUTS = { '7': 50, '★': 20, '♦': 10, '♣': 5, '♥': 3, '♠': 2 };
+const MEDAL_R    = 13;
+const BALL_R     = 20;
+const GRAVITY    = 0.42;
+const PUSHER_SPD = 0.55;
+const PUSHER_MAX = 72;   // how far pusher travels forward (px)
+const FRIC_TABLE = 0.90;
+const FRIC_AIR   = 0.995;
+const BOUNCE_M   = 0.20;
+const BOUNCE_B   = 0.58;
+const SLOT_SYMS  = ['7','★','♦','♣','♥','♠'];
+const SLOT_PAY   = { '7':50, '★':20, '♦':10, '♣':5, '♥':3, '♠':2 };
 
-// ===== State =====
-let medals = [];          // falling + on-table medals
-let particles = [];       // coin burst particles
-let medalCount = 100;
-let score = 0;
+// ===== Layout (computed in resize) =====
+let table  = { x:0, w:0, topY:0, frontY:0 };
+let chukkas= [];  // [{x,y,r,lit}]
+let pusher = { x:0, w:0, y:0, baseY:0, h:14, dir:1, progress:0 };
+
+// ===== Game state =====
+let medals       = [];
+let ballObj      = null;
+let particles    = [];
+let medalCount   = 100;
+let ballCount    = 3;
+let score        = 0;
 let slotSpinning = false;
-let slotReels = ['7', '7', '7'];
-let slotAnimFrame = 0;
+let slotReels    = ['7','7','7'];
+let flashOverlay = 0;
+let sliderRatio  = 0.5;
 
-// Pusher state — baseY is fixed, y moves forward/back with progress
-let pusher = { x: 0, y: 0, baseY: 0, w: 0, h: 18, dir: 1, progress: 0 };
-
-// Slider state
-let sliderRatio = 0.5; // 0..1
-
-// Canvas
 const canvas = document.getElementById('game-canvas');
-const ctx = canvas.getContext('2d');
+const ctx    = canvas.getContext('2d');
 
 // ===== Resize =====
 function resize() {
   const rect = canvas.getBoundingClientRect();
-  canvas.width = rect.width * devicePixelRatio;
+  canvas.width  = rect.width  * devicePixelRatio;
   canvas.height = rect.height * devicePixelRatio;
   ctx.scale(devicePixelRatio, devicePixelRatio);
 
-  pusher.w = rect.width * 0.7;
-  pusher.x = rect.width / 2 - pusher.w / 2;
-  pusher.baseY = rect.height * 0.52;
-  pusher.y = pusher.baseY;
-}
+  const W = rect.width, H = rect.height;
+  table.w      = W * 0.74;
+  table.x      = (W - table.w) / 2;
+  table.topY   = H * 0.33;
+  table.frontY = H * 0.83;
 
-window.addEventListener('resize', () => { resize(); });
+  pusher.x     = table.x;
+  pusher.w     = table.w;
+  pusher.baseY = table.topY;
+  pusher.y     = table.topY;
+
+  // チャッカー：台の中央付近に2つ
+  const cy = table.topY + (table.frontY - table.topY) * 0.48;
+  chukkas = [
+    { x: table.x + table.w * 0.28, y: cy, r: 15, lit: 0 },
+    { x: table.x + table.w * 0.72, y: cy, r: 15, lit: 0 },
+  ];
+}
+window.addEventListener('resize', resize);
 resize();
 
-// ===== Medal class =====
+// ===== Medal =====
 class Medal {
   constructor(x, y) {
     this.x = x;
     this.y = y;
-    this.vx = (Math.random() - 0.5) * 1.2;
+    this.vx = (Math.random() - 0.5) * 1.8;
     this.vy = 0;
-    this.r = MEDAL_R;
+    this.r  = MEDAL_R;
     this.onTable = false;
-    this.settled = false;
   }
 
-  update(W, H) {
-    const tableY = pusher.y + pusher.h + MEDAL_R;
-    const floorY = H - MEDAL_R - 2;
-
+  update() {
     if (!this.onTable) {
+      // 落下中
       this.vy += GRAVITY;
-      this.x += this.vx;
-      this.y += this.vy;
+      this.vx *= FRIC_AIR;
+      this.x  += this.vx;
+      this.y  += this.vy;
 
-      // Land on pusher surface
-      if (this.y >= pusher.y - this.r &&
-          this.y <= pusher.y + pusher.h &&
-          this.x >= pusher.x && this.x <= pusher.x + pusher.w) {
-        this.y = pusher.y - this.r;
-        this.vy *= -BOUNCE;
-        this.vx *= FRICTION;
+      // チャッカー判定（台に着く前に穴へ入ったら）
+      for (const c of chukkas) {
+        const d2 = (this.x - c.x) ** 2 + (this.y - c.y) ** 2;
+        if (d2 < (c.r + this.r * 0.55) ** 2) {
+          c.lit = 30; // 光らせるフレーム数
+          return 'chukka';
+        }
+      }
+
+      // 台のサイド壁でバウンド（落下中は壁内で跳ね返る）
+      if (this.x - this.r < table.x) {
+        this.x = table.x + this.r;
+        this.vx = Math.abs(this.vx) * 0.55;
+      }
+      if (this.x + this.r > table.x + table.w) {
+        this.x = table.x + table.w - this.r;
+        this.vx = -Math.abs(this.vx) * 0.55;
+      }
+
+      // 台面に着地 → 乗る
+      if (this.y + this.r >= table.topY) {
+        this.y  = table.topY - this.r;
+        this.vy = 0;
+        this.vx *= 0.6;
         this.onTable = true;
       }
 
-      // Wall bounce
-      if (this.x - this.r < 0) { this.x = this.r; this.vx = Math.abs(this.vx); }
-      if (this.x + this.r > W) { this.x = W - this.r; this.vx = -Math.abs(this.vx); }
     } else {
-      // Pushed by pusher
+      // 台上
       this.x += this.vx;
-      this.vx *= FRICTION;
-      this.y = pusher.y - this.r;
+      this.y += this.vy;
+      this.vx *= FRIC_TABLE;
+      // 後退しない（vy < 0 は許可しない）
+      if (this.vy < 0) this.vy = 0;
+      else this.vy *= FRIC_TABLE;
 
-      // Fell off pusher edge → becomes falling
-      if (this.x < pusher.x - this.r || this.x > pusher.x + pusher.w + this.r) {
-        this.onTable = false;
-        this.vy = 1;
-        this.vx *= 0.5;
+      // 横（サイドガター）→ 没収
+      if (this.x + this.r < table.x || this.x - this.r > table.x + table.w) {
+        return 'lose';
+      }
+
+      // 前方（フロントエッジ）→ 獲得
+      if (this.y - this.r > table.frontY) {
+        return 'collect';
       }
     }
-
-    // Floor (collected)
-    if (this.y >= floorY) {
-      return 'collect';
-    }
-
     return 'alive';
   }
 
-  draw(ctx) {
-    // Coin body
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+  draw() {
     const grad = ctx.createRadialGradient(
-      this.x - this.r * 0.3, this.y - this.r * 0.3, this.r * 0.1,
+      this.x - this.r * 0.3, this.y - this.r * 0.3, this.r * 0.08,
       this.x, this.y, this.r
     );
-    grad.addColorStop(0, '#fff8a0');
+    grad.addColorStop(0,   '#fff8a0');
     grad.addColorStop(0.5, '#f0c040');
-    grad.addColorStop(1, '#a06000');
+    grad.addColorStop(1,   '#9a5800');
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
     ctx.fillStyle = grad;
     ctx.fill();
     ctx.strokeStyle = '#c08800';
     ctx.lineWidth = 1.5;
     ctx.stroke();
-
-    // Inner ring
     ctx.beginPath();
-    ctx.arc(this.x, this.y, this.r * 0.65, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(255,255,180,0.5)';
+    ctx.arc(this.x, this.y, this.r * 0.62, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,160,0.4)';
     ctx.lineWidth = 1;
     ctx.stroke();
+  }
+}
+
+// ===== Ball（特殊オブジェクト） =====
+class Ball {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.vx = (Math.random() - 0.5) * 2.5;
+    this.vy = 0;
+    this.r  = BALL_R;
+    this.onTable = false;
+  }
+
+  update() {
+    if (!this.onTable) {
+      this.vy += GRAVITY;
+      this.vx *= FRIC_AIR;
+      this.x  += this.vx;
+      this.y  += this.vy;
+
+      if (this.x - this.r < table.x) { this.x = table.x + this.r; this.vx = Math.abs(this.vx) * 0.8; }
+      if (this.x + this.r > table.x + table.w) { this.x = table.x + table.w - this.r; this.vx = -Math.abs(this.vx) * 0.8; }
+
+      if (this.y + this.r >= table.topY) {
+        this.y  = table.topY - this.r;
+        this.vy = -Math.abs(this.vy) * BOUNCE_B;
+        this.vx *= 0.85;
+        // 着地時：周囲のメダルを前方に吹き飛ばす
+        medals.forEach(m => {
+          const dx = m.x - this.x, dy = m.y - this.y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < 72 * 72) {
+            const dist = Math.sqrt(d2) + 0.1;
+            m.vy += (3.5 + 60 / dist);
+            m.vx += (dx / dist) * 1.8;
+          }
+        });
+        if (Math.abs(this.vy) < 1.2) {
+          this.vy = 0;
+          this.onTable = true;
+        }
+      }
+    } else {
+      this.x += this.vx;
+      this.y += this.vy;
+      this.vx *= FRIC_TABLE;
+      if (this.vy < 0) this.vy = 0;
+      else this.vy *= FRIC_TABLE;
+
+      // ボールとメダルの接触：メダルを前方へ
+      medals.forEach(m => {
+        const dx = m.x - this.x, dy = m.y - this.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < this.r + m.r && dist > 0.1) {
+          const nx = dx / dist, ny = dy / dist;
+          const ov = this.r + m.r - dist;
+          m.x  += nx * ov * 0.7;
+          m.y  += ny * ov * 0.7;
+          m.vy += ny * 2.2;
+          m.vx += nx * 1.2;
+        }
+      });
+
+      if (this.x + this.r < table.x || this.x - this.r > table.x + table.w) return 'gone';
+      if (this.y - this.r > table.frontY) return 'gone';
+    }
+    return 'alive';
+  }
+
+  draw() {
+    const grad = ctx.createRadialGradient(
+      this.x - this.r * 0.35, this.y - this.r * 0.35, this.r * 0.1,
+      this.x, this.y, this.r
+    );
+    grad.addColorStop(0,   '#e0f8ff');
+    grad.addColorStop(0.4, '#40a8ff');
+    grad.addColorStop(1,   '#0040a0');
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.strokeStyle = '#80d0ff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // 光沢
+    ctx.beginPath();
+    ctx.arc(this.x - this.r * 0.3, this.y - this.r * 0.35, this.r * 0.28, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fill();
   }
 }
 
 // ===== Particle =====
 class Particle {
   constructor(x, y) {
-    this.x = x;
-    this.y = y;
-    const angle = Math.random() * Math.PI * 2;
-    const speed = 1 + Math.random() * 3;
-    this.vx = Math.cos(angle) * speed;
-    this.vy = Math.sin(angle) * speed - 2;
+    const a = Math.random() * Math.PI * 2;
+    const s = 1.5 + Math.random() * 3;
+    this.x = x; this.y = y;
+    this.vx = Math.cos(a) * s;
+    this.vy = Math.sin(a) * s - 2;
     this.life = 1.0;
     this.r = 3 + Math.random() * 4;
   }
   update() {
     this.vy += 0.15;
-    this.x += this.vx;
-    this.y += this.vy;
+    this.x  += this.vx;
+    this.y  += this.vy;
     this.life -= 0.04;
   }
-  draw(ctx) {
+  draw() {
     ctx.globalAlpha = this.life;
     ctx.beginPath();
     ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
-    ctx.fillStyle = `hsl(${40 + Math.random() * 20}, 100%, 60%)`;
+    ctx.fillStyle = `hsl(${40 + Math.random() * 20},100%,60%)`;
     ctx.fill();
     ctx.globalAlpha = 1;
   }
@@ -155,102 +269,158 @@ class Particle {
 
 // ===== Pusher =====
 function updatePusher() {
-  pusher.progress += pusher.dir * PUSHER_SPEED;
-  if (pusher.progress >= PUSHER_DEPTH) {
-    pusher.progress = PUSHER_DEPTH;
-    pusher.dir = -1;
-  } else if (pusher.progress <= 0) {
-    pusher.progress = 0;
-    pusher.dir = 1;
-  }
-  // Pusher moves forward (down-screen) as progress increases
+  pusher.progress += pusher.dir * PUSHER_SPD;
+  if (pusher.progress >= PUSHER_MAX) { pusher.progress = PUSHER_MAX; pusher.dir = -1; }
+  else if (pusher.progress <= 0)     { pusher.progress = 0;          pusher.dir = 1; }
   pusher.y = pusher.baseY + pusher.progress;
 
-  // Nudge on-table medals in the push direction
-  const pushDelta = PUSHER_SPEED * pusher.dir * 0.35;
-  medals.forEach(m => {
-    if (m.onTable) m.vx += pushDelta;
+  // 前進時のみ：プッシャー付近のメダルを前方（+vy）に押す
+  if (pusher.dir === 1) {
+    const force = PUSHER_SPD * 0.65;
+    medals.forEach(m => {
+      if (m.onTable && m.y >= pusher.y - MEDAL_R * 2) {
+        m.vy += force;
+      }
+    });
+  }
+}
+
+function drawPusher() {
+  const alpha = pusher.progress / PUSHER_MAX;
+  const { x, w, y, h } = pusher;
+
+  // 台本体（staticシェルフ: frontY より奥の壁）
+  ctx.fillStyle = 'rgba(30,15,70,0.9)';
+  ctx.fillRect(table.x, table.topY, table.w, table.frontY - table.topY);
+
+  // プッシャープレート
+  const g = ctx.createLinearGradient(x, y, x, y + h);
+  g.addColorStop(0, `rgba(170,90,255,${0.72 + alpha * 0.25})`);
+  g.addColorStop(1, `rgba(80,30,160,${0.85 + alpha * 0.12})`);
+  ctx.fillStyle = g;
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = `rgba(210,150,255,${0.5 + alpha * 0.45})`;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, w, h);
+
+  // 光沢ライン
+  ctx.strokeStyle = `rgba(255,230,255,${0.25 + alpha * 0.4})`;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(x + 6, y + 2.5);
+  ctx.lineTo(x + w - 6, y + 2.5);
+  ctx.stroke();
+}
+
+// ===== Background / Table =====
+function drawScene(W, H) {
+  // キャンバス全体
+  ctx.fillStyle = '#080818';
+  ctx.fillRect(0, 0, W, H);
+
+  // サイドガター（没収ゾーン）
+  ctx.fillStyle = '#200a20';
+  ctx.fillRect(0, table.topY, table.x, table.frontY - table.topY);
+  ctx.fillRect(table.x + table.w, table.topY, W - (table.x + table.w), table.frontY - table.topY);
+
+  // サイドガター「LOSE」ラベル
+  ctx.fillStyle = 'rgba(200,60,60,0.55)';
+  ctx.font = 'bold 10px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('LOSE', table.x / 2, (table.topY + table.frontY) / 2);
+  ctx.fillText('LOSE', table.x + table.w + (W - table.x - table.w) / 2, (table.topY + table.frontY) / 2);
+
+  // ドロップゾーン（台の上）
+  const dropGrad = ctx.createLinearGradient(0, 0, 0, table.topY);
+  dropGrad.addColorStop(0, '#0a0820');
+  dropGrad.addColorStop(1, '#12083a');
+  ctx.fillStyle = dropGrad;
+  ctx.fillRect(table.x, 0, table.w, table.topY);
+
+  // フロントエッジ（獲得ゾーン）
+  const glow = ctx.createLinearGradient(0, table.frontY - 12, 0, table.frontY + 20);
+  glow.addColorStop(0,   'rgba(240,200,0,0)');
+  glow.addColorStop(0.4, 'rgba(240,200,0,0.55)');
+  glow.addColorStop(1,   'rgba(240,200,0,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(table.x, table.frontY - 12, table.w, 32);
+
+  ctx.strokeStyle = '#f0c840';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(table.x, table.frontY);
+  ctx.lineTo(table.x + table.w, table.frontY);
+  ctx.stroke();
+
+  // 「GET!」ラベル
+  ctx.fillStyle = 'rgba(240,200,0,0.8)';
+  ctx.font = 'bold 11px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('◀ GET! ▶', table.x + table.w / 2, table.frontY + 14);
+
+  // 下部（獲得後エリア）
+  const floorGrad = ctx.createLinearGradient(0, table.frontY, 0, H);
+  floorGrad.addColorStop(0,   'rgba(240,180,0,0.25)');
+  floorGrad.addColorStop(1,   'rgba(240,180,0,0.05)');
+  ctx.fillStyle = floorGrad;
+  ctx.fillRect(table.x, table.frontY, table.w, H - table.frontY);
+}
+
+// ===== Chukkas =====
+function updateChukkas() {
+  chukkas.forEach(c => { if (c.lit > 0) c.lit--; });
+}
+
+function drawChukkas() {
+  chukkas.forEach(c => {
+    const glow = c.lit / 30;
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+    ctx.fillStyle = glow > 0
+      ? `rgba(255,240,100,${0.4 + glow * 0.5})`
+      : 'rgba(0,0,0,0.8)';
+    ctx.fill();
+    ctx.strokeStyle = glow > 0
+      ? `rgba(255,220,0,${0.8 + glow * 0.2})`
+      : 'rgba(120,80,200,0.7)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = glow > 0 ? '#ffe040' : 'rgba(160,100,255,0.5)';
+    ctx.font = 'bold 9px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('◎', c.x, c.y);
+    ctx.textBaseline = 'alphabetic';
   });
 }
 
-function drawPusher(W, H) {
-  const alpha = pusher.progress / PUSHER_DEPTH;
-  const px = pusher.x, pw = pusher.w;
-  const py = pusher.y, ph = pusher.h;
-
-  // Static back shelf (always at baseY + PUSHER_DEPTH)
-  const shelfY = pusher.baseY + PUSHER_DEPTH + ph;
-  ctx.fillStyle = '#2a1060';
-  ctx.fillRect(px, shelfY, pw, H - shelfY);
-  ctx.strokeStyle = '#6030a0';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(px, shelfY, pw, H - shelfY);
-
-  // Pusher plate with gradient
-  const plateGrad = ctx.createLinearGradient(px, py, px, py + ph);
-  plateGrad.addColorStop(0, `rgba(160,80,255,${0.7 + alpha * 0.25})`);
-  plateGrad.addColorStop(1, `rgba(80,30,160,${0.8 + alpha * 0.15})`);
-  ctx.fillStyle = plateGrad;
-  ctx.fillRect(px, py, pw, ph);
-  ctx.strokeStyle = `rgba(200,140,255,${0.6 + alpha * 0.4})`;
-  ctx.lineWidth = 2;
-  ctx.strokeRect(px, py, pw, ph);
-
-  // Sheen line on top edge
-  ctx.strokeStyle = `rgba(255,220,255,${0.3 + alpha * 0.4})`;
+// ===== Drop Zone Indicator =====
+function drawDropZone(W) {
+  const dropX = table.x + sliderRatio * table.w;
+  ctx.strokeStyle = 'rgba(255,220,0,0.45)';
   ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(px + 4, py + 2);
-  ctx.lineTo(px + pw - 4, py + 2);
-  ctx.stroke();
-}
-
-function drawBackground(W, H) {
-  // Dark field
-  ctx.fillStyle = '#0a0a18';
-  ctx.fillRect(0, 0, W, H);
-
-  // Side walls
-  ctx.fillStyle = '#1a0a40';
-  ctx.fillRect(0, 0, pusher.x - 2, H);
-  ctx.fillRect(pusher.x + pusher.w + 2, 0, W - (pusher.x + pusher.w + 2), H);
-
-  // Floor glow
-  const floorGrad = ctx.createLinearGradient(0, H - 30, 0, H);
-  floorGrad.addColorStop(0, 'rgba(240,180,0,0.0)');
-  floorGrad.addColorStop(1, 'rgba(240,180,0,0.25)');
-  ctx.fillStyle = floorGrad;
-  ctx.fillRect(pusher.x, H - 30, pusher.w, 30);
-}
-
-function drawDropZone(W, H) {
-  const dropX = pusher.x + sliderRatio * pusher.w;
-  ctx.strokeStyle = 'rgba(255,220,0,0.5)';
-  ctx.lineWidth = 1.5;
-  ctx.setLineDash([4, 4]);
+  ctx.setLineDash([4, 5]);
   ctx.beginPath();
   ctx.moveTo(dropX, 0);
-  ctx.lineTo(dropX, pusher.y - 20);
+  ctx.lineTo(dropX, table.topY - 18);
   ctx.stroke();
   ctx.setLineDash([]);
-
-  // Arrow
-  ctx.fillStyle = 'rgba(255,220,0,0.7)';
+  ctx.fillStyle = 'rgba(255,220,0,0.75)';
   ctx.beginPath();
-  ctx.moveTo(dropX, pusher.y - 16);
-  ctx.lineTo(dropX - 7, pusher.y - 28);
-  ctx.lineTo(dropX + 7, pusher.y - 28);
+  ctx.moveTo(dropX, table.topY - 14);
+  ctx.lineTo(dropX - 7, table.topY - 26);
+  ctx.lineTo(dropX + 7, table.topY - 26);
   ctx.closePath();
   ctx.fill();
 }
 
 // ===== Slot Machine =====
-function spinSlot(bonusMedals) {
+function spinSlot() {
   if (slotSpinning) return;
   slotSpinning = true;
   document.getElementById('slot-result').textContent = '';
 
-  const durations = [600, 900, 1200];
+  const durations = [600, 950, 1300];
   const reelEls = [
     document.querySelector('#reel-0 .reel-item'),
     document.querySelector('#reel-1 .reel-item'),
@@ -260,64 +430,54 @@ function spinSlot(bonusMedals) {
   const results = [];
   durations.forEach((dur, i) => {
     let elapsed = 0;
-    const interval = 80;
-    const timer = setInterval(() => {
-      elapsed += interval;
-      const sym = SLOT_SYMBOLS[Math.floor(Math.random() * SLOT_SYMBOLS.length)];
-      reelEls[i].textContent = sym;
+    const iv = setInterval(() => {
+      elapsed += 80;
+      reelEls[i].textContent = SLOT_SYMS[Math.floor(Math.random() * SLOT_SYMS.length)];
       if (elapsed >= dur) {
-        clearInterval(timer);
-        const final = SLOT_SYMBOLS[Math.floor(Math.random() * SLOT_SYMBOLS.length)];
+        clearInterval(iv);
+        const final = SLOT_SYMS[Math.floor(Math.random() * SLOT_SYMS.length)];
         reelEls[i].textContent = final;
         slotReels[i] = final;
         results.push(final);
-        if (results.length === 3) {
-          onSlotComplete();
-        }
+        if (results.length === 3) onSlotDone();
       }
-    }, interval);
+    }, 80);
   });
 }
 
-let flashOverlay = 0; // 0..1, drawn each frame
-
-function onSlotComplete() {
+function onSlotDone() {
   const [a, b, c] = slotReels;
-  const resultEl = document.getElementById('slot-result');
+  const el = document.getElementById('slot-result');
   const reelEls = [
     document.getElementById('reel-0'),
     document.getElementById('reel-1'),
     document.getElementById('reel-2'),
   ];
-  let reward = 0;
 
   if (a === b && b === c) {
-    reward = SLOT_PAYOUTS[a] || 5;
-    resultEl.textContent = `✨ ${a}${b}${c} ✨ +${reward}枚!`;
-    resultEl.style.color = '#f0c040';
+    const reward = SLOT_PAY[a] || 5;
+    el.textContent = `✨${a}${b}${c}✨ +${reward}枚!`;
+    el.style.color = '#f0c040';
     flashOverlay = 1.0;
-    reelEls.forEach(el => { el.style.boxShadow = '0 0 24px #fff, 0 0 48px #f0c040'; });
-    setTimeout(() => reelEls.forEach(el => { el.style.boxShadow = ''; }), 1200);
-    spawnRewardMedals(reward);
+    reelEls.forEach(r => { r.style.boxShadow = '0 0 24px #fff, 0 0 48px #f0c040'; });
+    setTimeout(() => reelEls.forEach(r => { r.style.boxShadow = ''; }), 1200);
+    spawnBonus(reward);
   } else if (a === b || b === c || a === c) {
-    reward = 2;
-    resultEl.textContent = `${a}${b}${c} +${reward}枚`;
-    resultEl.style.color = '#c0c0c0';
-    spawnRewardMedals(reward);
+    el.textContent = `${a}${b}${c} +2枚`;
+    el.style.color = '#c0c0c0';
+    spawnBonus(2);
   } else {
-    resultEl.textContent = `${a}${b}${c} ハズレ`;
-    resultEl.style.color = '#666';
+    el.textContent = `${a}${b}${c} ハズレ`;
+    el.style.color = '#555';
   }
-
   setTimeout(() => { slotSpinning = false; }, 500);
 }
 
-function spawnRewardMedals(n) {
+function spawnBonus(n) {
   for (let i = 0; i < n; i++) {
     setTimeout(() => {
-      const x = pusher.x + Math.random() * pusher.w;
-      medals.push(new Medal(x, -MEDAL_R * 2));
-    }, i * 60);
+      medals.push(new Medal(table.x + Math.random() * table.w, -MEDAL_R * 2));
+    }, i * 55);
   }
 }
 
@@ -325,179 +485,180 @@ function spawnRewardMedals(n) {
 function updateHUD() {
   document.getElementById('medal-value').textContent = medalCount;
   document.getElementById('score-value').textContent = score;
+  const ballBtn = document.getElementById('ball-btn');
+  if (ballBtn) ballBtn.textContent = `ボール (${ballCount})`;
 }
 
-// ===== Slider Control =====
+// ===== Slider =====
 const sliderTrack = document.getElementById('slider-track');
 const sliderThumb = document.getElementById('slider-thumb');
-const dropIndicator = document.getElementById('drop-indicator');
 
 function updateSliderUI() {
-  const trackW = sliderTrack.clientWidth;
-  const thumbW = 36;
-  const px = sliderRatio * (trackW - thumbW);
-  sliderThumb.style.left = px + 'px';
+  const tw = sliderTrack.clientWidth - 36;
+  sliderThumb.style.left      = sliderRatio * tw + 'px';
   sliderThumb.style.transform = 'translateY(-50%)';
-  dropIndicator.style.left = (sliderRatio * trackW) + 'px';
-  dropIndicator.style.transform = 'none';
+  document.getElementById('drop-indicator').style.left =
+    sliderRatio * sliderTrack.clientWidth + 'px';
+  document.getElementById('drop-indicator').style.transform = 'none';
 }
 
-function getRatioFromEvent(e) {
-  const rect = sliderTrack.getBoundingClientRect();
-  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-  return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+function getRatio(e) {
+  const r = sliderTrack.getBoundingClientRect();
+  const cx = e.touches ? e.touches[0].clientX : e.clientX;
+  return Math.max(0, Math.min(1, (cx - r.left) / r.width));
 }
 
 sliderTrack.addEventListener('mousedown', e => {
-  sliderRatio = getRatioFromEvent(e);
-  updateSliderUI();
-  const onMove = ev => { sliderRatio = getRatioFromEvent(ev); updateSliderUI(); };
-  const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
-  document.addEventListener('mousemove', onMove);
-  document.addEventListener('mouseup', onUp);
+  sliderRatio = getRatio(e); updateSliderUI();
+  const mv = ev => { sliderRatio = getRatio(ev); updateSliderUI(); };
+  const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); };
+  document.addEventListener('mousemove', mv);
+  document.addEventListener('mouseup', up);
 });
+sliderTrack.addEventListener('touchstart', e => { e.preventDefault(); sliderRatio = getRatio(e); updateSliderUI(); }, { passive: false });
+sliderTrack.addEventListener('touchmove',  e => { e.preventDefault(); sliderRatio = getRatio(e); updateSliderUI(); }, { passive: false });
+sliderTrack.addEventListener('touchend',   e => { e.preventDefault(); dropMedal(); },                                 { passive: false });
 
-sliderTrack.addEventListener('touchstart', e => {
-  e.preventDefault();
-  sliderRatio = getRatioFromEvent(e);
-  updateSliderUI();
-}, { passive: false });
-
-sliderTrack.addEventListener('touchmove', e => {
-  e.preventDefault();
-  sliderRatio = getRatioFromEvent(e);
-  updateSliderUI();
-}, { passive: false });
-
-sliderTrack.addEventListener('touchend', e => {
-  e.preventDefault();
-  dropMedal();
-}, { passive: false });
-
-// ===== Game Over =====
-function checkGameOver() {
-  if (medalCount <= 0 && medals.length === 0) {
-    const resultEl = document.getElementById('slot-result');
-    resultEl.textContent = 'ゲームオーバー！タップでリスタート';
-    resultEl.style.color = '#ff4040';
-    canvas.addEventListener('click', restartGame, { once: true });
-    document.getElementById('drop-btn').disabled = true;
-  }
-}
-
-function restartGame() {
-  medals = [];
-  particles = [];
-  medalCount = 100;
-  score = 0;
-  collected = 0;
-  slotSpinning = false;
-  flashOverlay = 0;
-  document.getElementById('slot-result').textContent = '';
-  document.getElementById('drop-btn').disabled = false;
-  updateHUD();
-}
-
-// ===== Drop logic =====
+// ===== Drop =====
 function dropMedal() {
   if (medalCount <= 0) return;
-  const dropX = pusher.x + sliderRatio * pusher.w;
-  medals.push(new Medal(dropX, 0));
-  medalCount -= 1;
+  const x = table.x + sliderRatio * table.w;
+  medals.push(new Medal(x, 4));
+  medalCount--;
   updateHUD();
 }
 
-// ===== Drop Button =====
-let autoDropTimer = null;
+function dropBall() {
+  if (ballCount <= 0 || ballObj) return;
+  const x = table.x + sliderRatio * table.w;
+  ballObj = new Ball(x, 4);
+  ballCount--;
+  updateHUD();
+}
 
+// 投入ボタン長押し連射
+let autoTimer = null;
 const dropBtn = document.getElementById('drop-btn');
 dropBtn.addEventListener('pointerdown', () => {
   dropMedal();
-  autoDropTimer = setInterval(() => dropMedal(), 280);
+  autoTimer = setInterval(dropMedal, 280);
 });
-dropBtn.addEventListener('pointerup', () => { clearInterval(autoDropTimer); });
-dropBtn.addEventListener('pointerleave', () => { clearInterval(autoDropTimer); });
+dropBtn.addEventListener('pointerup',    () => clearInterval(autoTimer));
+dropBtn.addEventListener('pointerleave', () => clearInterval(autoTimer));
+
+// ボールボタン
+const ballBtn = document.getElementById('ball-btn');
+if (ballBtn) {
+  ballBtn.addEventListener('click', dropBall);
+  // ボールは30秒ごとに1個補充
+  setInterval(() => {
+    if (ballCount < 5) { ballCount++; updateHUD(); }
+  }, 30000);
+}
+
+// ===== Game Over / Restart =====
+function checkGameOver() {
+  if (medalCount <= 0 && medals.length === 0 && !ballObj) {
+    document.getElementById('slot-result').textContent = 'ゲームオーバー！タップでリスタート';
+    document.getElementById('slot-result').style.color = '#ff4040';
+    canvas.addEventListener('click', restart, { once: true });
+    dropBtn.disabled = true;
+  }
+}
+
+function restart() {
+  medals = []; ballObj = null; particles = [];
+  medalCount = 100; ballCount = 3; score = 0;
+  slotSpinning = false; flashOverlay = 0;
+  document.getElementById('slot-result').textContent = '';
+  dropBtn.disabled = false;
+  updateHUD();
+}
 
 // ===== Main Loop =====
-let collected = 0; // medals collected this session for slot trigger
-
 function gameLoop() {
   const rect = canvas.getBoundingClientRect();
-  const W = rect.width;
-  const H = rect.height;
+  const W = rect.width, H = rect.height;
 
-  // Update pusher
   updatePusher();
+  updateChukkas();
 
-  // Medal-medal collision (simple circle push)
+  // メダル同士の衝突
   for (let i = 0; i < medals.length; i++) {
     for (let j = i + 1; j < medals.length; j++) {
       const a = medals[i], b = medals[j];
       const dx = b.x - a.x, dy = b.y - a.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      const minDist = a.r + b.r;
-      if (dist < minDist && dist > 0.01) {
+      const min  = a.r + b.r;
+      if (dist < min && dist > 0.01) {
         const nx = dx / dist, ny = dy / dist;
-        const overlap = (minDist - dist) / 2;
-        a.x -= nx * overlap; a.y -= ny * overlap;
-        b.x += nx * overlap; b.y += ny * overlap;
+        const ov = (min - dist) / 2;
+        a.x -= nx * ov; a.y -= ny * ov;
+        b.x += nx * ov; b.y += ny * ov;
         const rel = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
         if (rel > 0) {
-          a.vx -= rel * nx * 0.5; a.vy -= rel * ny * 0.5;
-          b.vx += rel * nx * 0.5; b.vy += rel * ny * 0.5;
+          a.vx -= rel * nx * 0.45; a.vy -= rel * ny * 0.45;
+          b.vx += rel * nx * 0.45; b.vy += rel * ny * 0.45;
         }
       }
     }
   }
 
-  // Update medals
-  const toRemove = [];
+  // メダル更新
+  const remove = [];
   medals.forEach((m, i) => {
-    const result = m.update(W, H);
-    if (result === 'collect') {
-      toRemove.push(i);
-      score += 1;
-      medalCount += 1;
-      collected += 1;
-      // Burst particles
-      for (let p = 0; p < 6; p++) particles.push(new Particle(m.x, H - 10));
-      // Trigger slot every 5 collected
-      if (collected % 5 === 0) spinSlot();
+    const res = m.update();
+    if (res === 'collect') {
+      remove.push(i);
+      score++;
+      medalCount++;
+      for (let p = 0; p < 5; p++) particles.push(new Particle(m.x, table.frontY));
       updateHUD();
       checkGameOver();
+    } else if (res === 'lose') {
+      remove.push(i); // 没収：何もしない
+      checkGameOver();
+    } else if (res === 'chukka') {
+      remove.push(i);
+      spinSlot(); // チャッカーに入ったのでスロット発動
     }
   });
-  for (let i = toRemove.length - 1; i >= 0; i--) medals.splice(toRemove[i], 1);
+  for (let i = remove.length - 1; i >= 0; i--) medals.splice(remove[i], 1);
 
-  // Update particles
+  // ボール更新
+  if (ballObj) {
+    const res = ballObj.update();
+    if (res === 'gone') ballObj = null;
+  }
+
+  // パーティクル
   particles = particles.filter(p => { p.update(); return p.life > 0; });
 
-  // Draw
+  // ===== 描画 =====
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  // Reset transform for devicePixelRatio
   ctx.save();
 
-  drawBackground(W, H);
-  drawDropZone(W, H);
-  drawPusher(W, H);
+  drawScene(W, H);
+  drawDropZone(W);
+  drawPusher();
+  drawChukkas();
 
-  medals.forEach(m => m.draw(ctx));
-  particles.forEach(p => p.draw(ctx));
+  medals.forEach(m => m.draw());
+  if (ballObj) ballObj.draw();
+  particles.forEach(p => p.draw());
 
-  // Jackpot flash overlay
+  // ジャックポットフラッシュ
   if (flashOverlay > 0) {
-    ctx.fillStyle = `rgba(255,240,100,${flashOverlay * 0.35})`;
+    ctx.fillStyle = `rgba(255,240,80,${flashOverlay * 0.30})`;
     ctx.fillRect(0, 0, W, H);
-    flashOverlay -= 0.03;
-    if (flashOverlay < 0) flashOverlay = 0;
+    flashOverlay -= 0.025;
   }
 
   ctx.restore();
-
   requestAnimationFrame(gameLoop);
 }
 
-// Init
+// ===== Init =====
 updateSliderUI();
 updateHUD();
 gameLoop();

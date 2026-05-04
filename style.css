@@ -162,8 +162,13 @@ body {
   pointer-events: none;
 }
 
+#btn-row {
+  display: flex;
+  gap: 10px;
+}
+
 #drop-btn {
-  width: 100%;
+  flex: 2;
   height: 48px;
   background: linear-gradient(180deg, #f0c040 0%, #c08000 100%);
   border: none;
@@ -181,3 +186,18 @@ body {
   transform: scale(0.97);
   box-shadow: 0 2px 6px rgba(0,0,0,0.5);
 }
+
+#ball-btn {
+  flex: 1;
+  height: 48px;
+  background: linear-gradient(180deg, #40b8ff 0%, #0060c0 100%);
+  border: none;
+  border-radius: 24px;
+  font-size: 14px;
+  font-weight: bold;
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5), 0 0 14px #40a0ff60;
+  transition: transform 0.08s;
+}
+#ball-btn:active { transform: scale(0.97); }
