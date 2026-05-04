@@ -4,8 +4,9 @@ const BALL_R     = 20;
 const GRAVITY    = 0.42;
 const PUSHER_SPD = 0.55;
 const PUSHER_MAX = 72;   // how far pusher travels forward (px)
-const FRIC_TABLE = 0.90;
+const FRIC_TABLE = 0.955;  // 高摩擦：メダルが詰まって止まりやすく
 const FRIC_AIR   = 0.995;
+const SETTLE_V   = 0.28;   // この速度以下なら静止
 const BOUNCE_M   = 0.20;
 const BOUNCE_B   = 0.58;
 // 獲得口は中央70%のみ（両端15%はガター）
@@ -109,13 +110,15 @@ class Medal {
       }
 
     } else {
-      // 台上
+      // 台上：高摩擦で詰まりやすく
       this.x += this.vx;
       this.y += this.vy;
       this.vx *= FRIC_TABLE;
-      // 後退しない（vy < 0 は許可しない）
       if (this.vy < 0) this.vy = 0;
       else this.vy *= FRIC_TABLE;
+      // 微速なら完全停止（ズルズル滑り防止）
+      if (Math.abs(this.vx) < SETTLE_V) this.vx = 0;
+      if (Math.abs(this.vy) < SETTLE_V) this.vy = 0;
 
       // 横（サイドガター）→ 没収
       if (this.x + this.r < table.x || this.x - this.r > table.x + table.w) {
@@ -172,6 +175,15 @@ class Ball {
       this.vx *= FRIC_AIR;
       this.x  += this.vx;
       this.y  += this.vy;
+
+      // チャッカー判定（ボールも対象）
+      for (const c of chukkas) {
+        const d2 = (this.x - c.x) ** 2 + (this.y - c.y) ** 2;
+        if (d2 < (c.r + this.r * 0.55) ** 2) {
+          c.lit = 30;
+          return 'chukka';
+        }
+      }
 
       if (this.x - this.r < table.x) { this.x = table.x + this.r; this.vx = Math.abs(this.vx) * 0.8; }
       if (this.x + this.r > table.x + table.w) { this.x = table.x + table.w - this.r; this.vx = -Math.abs(this.vx) * 0.8; }
@@ -280,14 +292,15 @@ function updatePusher() {
   else if (pusher.progress <= 0)     { pusher.progress = 0;          pusher.dir = 1; }
   pusher.y = pusher.baseY + pusher.progress;
 
-  // 前進時のみ：プッシャー付近のメダル・ボールを前方（+vy）に押す
+  // 前進時のみ：プッシャーに直接触れているメダル・ボールだけ押す
+  // 連鎖（詰まり→押し出し）は衝突判定が担う
   if (pusher.dir === 1) {
-    const force = PUSHER_SPD * 0.65;
+    const force = PUSHER_SPD * 1.1;
     medals.forEach(m => {
-      if (m.onTable && m.y >= pusher.y - MEDAL_R * 2) m.vy += force;
+      if (m.onTable && m.y >= pusher.y - MEDAL_R * 0.6) m.vy += force;
     });
-    if (ballObj && ballObj.onTable && ballObj.y >= pusher.y - BALL_R * 2) {
-      ballObj.vy += force * 1.8;
+    if (ballObj && ballObj.onTable && ballObj.y >= pusher.y - BALL_R * 0.6) {
+      ballObj.vy += force * 1.6;
     }
   }
 }
@@ -621,8 +634,9 @@ function gameLoop() {
         b.x += nx * ov; b.y += ny * ov;
         const rel = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
         if (rel > 0) {
-          a.vx -= rel * nx * 0.45; a.vy -= rel * ny * 0.45;
-          b.vx += rel * nx * 0.45; b.vy += rel * ny * 0.45;
+          // 反発係数を上げて詰まり→弾き出しを明確に
+          a.vx -= rel * nx * 0.65; a.vy -= rel * ny * 0.65;
+          b.vx += rel * nx * 0.65; b.vy += rel * ny * 0.65;
         }
       }
     }
@@ -653,6 +667,7 @@ function gameLoop() {
   if (ballObj) {
     const res = ballObj.update();
     if (res === 'gone') ballObj = null;
+    else if (res === 'chukka') { ballObj = null; spinSlot(); }
   }
 
   // パーティクル
