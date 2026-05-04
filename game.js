@@ -8,6 +8,9 @@ const FRIC_TABLE = 0.90;
 const FRIC_AIR   = 0.995;
 const BOUNCE_M   = 0.20;
 const BOUNCE_B   = 0.58;
+// 獲得口は中央70%のみ（両端15%はガター）
+const CHUTE_L    = 0.15;
+const CHUTE_R    = 0.85;
 const SLOT_SYMS  = ['7','★','♦','♣','♥','♠'];
 const SLOT_PAY   = { '7':50, '★':20, '♦':10, '♣':5, '♥':3, '♠':2 };
 
@@ -119,9 +122,11 @@ class Medal {
         return 'lose';
       }
 
-      // 前方（フロントエッジ）→ 獲得
+      // 前方（フロントエッジ）→ 中央獲得口なら獲得、端のガターは没収
       if (this.y - this.r > table.frontY) {
-        return 'collect';
+        const chuteL = table.x + table.w * CHUTE_L;
+        const chuteR = table.x + table.w * CHUTE_R;
+        return (this.x > chuteL && this.x < chuteR) ? 'collect' : 'lose';
       }
     }
     return 'alive';
@@ -191,11 +196,12 @@ class Ball {
         }
       }
     } else {
-      this.x += this.vx;
-      this.y += this.vy;
+      // 台は手前に傾いているイメージ：常に微前進
+      this.vy += 0.10;
+      this.x  += this.vx;
+      this.y  += this.vy;
       this.vx *= FRIC_TABLE;
-      if (this.vy < 0) this.vy = 0;
-      else this.vy *= FRIC_TABLE;
+      this.vy *= FRIC_TABLE;
 
       // ボールとメダルの接触：メダルを前方へ
       medals.forEach(m => {
@@ -274,14 +280,15 @@ function updatePusher() {
   else if (pusher.progress <= 0)     { pusher.progress = 0;          pusher.dir = 1; }
   pusher.y = pusher.baseY + pusher.progress;
 
-  // 前進時のみ：プッシャー付近のメダルを前方（+vy）に押す
+  // 前進時のみ：プッシャー付近のメダル・ボールを前方（+vy）に押す
   if (pusher.dir === 1) {
     const force = PUSHER_SPD * 0.65;
     medals.forEach(m => {
-      if (m.onTable && m.y >= pusher.y - MEDAL_R * 2) {
-        m.vy += force;
-      }
+      if (m.onTable && m.y >= pusher.y - MEDAL_R * 2) m.vy += force;
     });
+    if (ballObj && ballObj.onTable && ballObj.y >= pusher.y - BALL_R * 2) {
+      ballObj.vy += force * 1.8;
+    }
   }
 }
 
@@ -345,18 +352,35 @@ function drawScene(W, H) {
   ctx.fillStyle = glow;
   ctx.fillRect(table.x, table.frontY - 12, table.w, 32);
 
-  ctx.strokeStyle = '#f0c840';
-  ctx.lineWidth = 2.5;
+  // フロントエッジ：ガター部分（没収）
+  const chuteL = table.x + table.w * CHUTE_L;
+  const chuteR = table.x + table.w * CHUTE_R;
+  ctx.strokeStyle = '#602020';
+  ctx.lineWidth = 3;
   ctx.beginPath();
   ctx.moveTo(table.x, table.frontY);
+  ctx.lineTo(chuteL, table.frontY);
+  ctx.moveTo(chuteR, table.frontY);
   ctx.lineTo(table.x + table.w, table.frontY);
   ctx.stroke();
 
+  // フロントエッジ：獲得口（中央）
+  ctx.strokeStyle = '#f0c840';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(chuteL, table.frontY);
+  ctx.lineTo(chuteR, table.frontY);
+  ctx.stroke();
+
   // 「GET!」ラベル
-  ctx.fillStyle = 'rgba(240,200,0,0.8)';
+  ctx.fillStyle = 'rgba(240,200,0,0.85)';
   ctx.font = 'bold 11px Arial';
   ctx.textAlign = 'center';
   ctx.fillText('◀ GET! ▶', table.x + table.w / 2, table.frontY + 14);
+  ctx.fillStyle = 'rgba(180,60,60,0.7)';
+  ctx.font = 'bold 9px Arial';
+  ctx.fillText('LOSE', (table.x + chuteL) / 2, table.frontY + 14);
+  ctx.fillText('LOSE', (chuteR + table.x + table.w) / 2, table.frontY + 14);
 
   // 下部（獲得後エリア）
   const floorGrad = ctx.createLinearGradient(0, table.frontY, 0, H);
