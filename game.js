@@ -101,11 +101,11 @@ class Medal {
         this.vx = -Math.abs(this.vx) * 0.55;
       }
 
-      // 台面に着地 → 乗る
+      // 台面に着地 → 乗る（横速度を強めに殺す）
       if (this.y + this.r >= table.topY) {
         this.y  = table.topY - this.r;
         this.vy = 0;
-        this.vx *= 0.6;
+        this.vx *= 0.15;   // 着地衝撃で横滑りをほぼ止める
         this.onTable = true;
       }
 
