@@ -10,8 +10,8 @@ const SETTLE_V   = 0.40;   // 停止閾値を上げる（より素早く静止�
 const BOUNCE_M   = 0.20;
 const BOUNCE_B   = 0.58;
 // 獲得口は中央70%のみ（両端15%はガター）
-const CHUTE_L    = 0.15;
-const CHUTE_R    = 0.85;
+const CHUTE_L    = 0.23;   // LOSEゾーンを広げる（両端23%ずつ）
+const CHUTE_R    = 0.77;
 const SLOT_SYMS  = ['7','★','♦','♣','♥','♠'];
 const SLOT_PAY   = { '7':50, '★':20, '♦':10, '♣':5, '♥':3, '♠':2 };
 
@@ -54,10 +54,11 @@ function resize() {
   pusher.y     = table.topY;
 
   // チャッカー：台の中央付近に2つ
-  const cy = table.topY + (table.frontY - table.topY) * 0.48;
+  // チャッカーはドロップゾーン（台より上）に配置 → 落下中のメダル/ボールが当たる
+  const cy = table.topY * 0.58;
   chukkas = [
-    { x: table.x + table.w * 0.28, y: cy, r: 15, lit: 0 },
-    { x: table.x + table.w * 0.72, y: cy, r: 15, lit: 0 },
+    { x: table.x + table.w * 0.28, y: cy, r: 16, lit: 0 },
+    { x: table.x + table.w * 0.72, y: cy, r: 16, lit: 0 },
   ];
 }
 window.addEventListener('resize', resize);
@@ -412,22 +413,33 @@ function updateChukkas() {
 function drawChukkas() {
   chukkas.forEach(c => {
     const glow = c.lit / 30;
+    // 外周グロー
+    if (glow > 0) {
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, c.r + 8, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255,220,0,${glow * 0.3})`;
+      ctx.fill();
+    }
+    // 本体
     ctx.beginPath();
     ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
-    ctx.fillStyle = glow > 0
-      ? `rgba(255,240,100,${0.4 + glow * 0.5})`
-      : 'rgba(0,0,0,0.8)';
+    ctx.fillStyle = glow > 0 ? `rgba(255,240,80,${0.7 + glow * 0.3})` : 'rgba(20,0,50,0.85)';
     ctx.fill();
-    ctx.strokeStyle = glow > 0
-      ? `rgba(255,220,0,${0.8 + glow * 0.2})`
-      : 'rgba(120,80,200,0.7)';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = glow > 0 ? '#ffe040' : '#9060ff';
+    ctx.lineWidth = 2.5;
     ctx.stroke();
-    ctx.fillStyle = glow > 0 ? '#ffe040' : 'rgba(160,100,255,0.5)';
-    ctx.font = 'bold 9px Arial';
+    // 内側リング
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, c.r * 0.55, 0, Math.PI * 2);
+    ctx.strokeStyle = glow > 0 ? 'rgba(255,255,200,0.9)' : 'rgba(160,100,255,0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // SLOT ラベル
+    ctx.fillStyle = glow > 0 ? '#3a1a00' : '#b080ff';
+    ctx.font = `bold ${glow > 0 ? 9 : 8}px Arial`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('◎', c.x, c.y);
+    ctx.fillText('SLOT', c.x, c.y);
     ctx.textBaseline = 'alphabetic';
   });
 }
